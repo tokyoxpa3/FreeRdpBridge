@@ -1,0 +1,5 @@
+numpy
+opencv-python
+pynput
+pywin32
+PySide6

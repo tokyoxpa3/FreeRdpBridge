@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- 定義專案的組建配置，包括 Debug/Release 和 Win32/x64 平台 -->
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <!-- 全域屬性設定 -->
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>  <!-- Visual Studio 2022 版本 -->
+    <Keyword>Win32Proj</Keyword>               <!-- 專案類型為 Win32 專案 -->
+    <ProjectGuid>{40e10843-0dce-40d8-bd0c-64d3ca9220d5}</ProjectGuid>  <!-- 專案唯一識別碼 -->
+    <RootNamespace>RdpBridge</RootNamespace>    <!-- 根命名空間 -->
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>  <!-- 目標 Windows 平台版本 -->
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <!-- Win32 平台的 Debug 組態設定 -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>      <!-- 組建類型為應用程式 (臨時設定) -->
+    <UseDebugLibraries>true</UseDebugLibraries>             <!-- 使用偵錯函式庫 -->
+    <PlatformToolset>v143</PlatformToolset>                 <!-- 使用 Visual Studio 2022 v143 工具集 -->
+    <CharacterSet>Unicode</CharacterSet>                    <!-- 字元集為 Unicode -->
+  </PropertyGroup>
+  <!-- Win32 平台的 Release 組態設定 -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>      <!-- 組建類型為應用程式 (臨時設定) -->
+    <UseDebugLibraries>false</UseDebugLibraries>            <!-- 不使用偵錯函式庫 -->
+    <PlatformToolset>v143</PlatformToolset>                 <!-- 使用 Visual Studio 2022 v143 工具集 -->
+    <WholeProgramOptimization>true</WholeProgramOptimization> <!-- 啟用全程式最佳化 -->
+    <CharacterSet>Unicode</CharacterSet>                    <!-- 字元集為 Unicode -->
+  </PropertyGroup>
+  <!-- x64 平台的 Debug 組態設定 -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>   <!-- 組建類型為動態連結庫 (DLL) -->
+    <UseDebugLibraries>true</UseDebugLibraries>             <!-- 使用偵錯函式庫 -->
+    <PlatformToolset>v143</PlatformToolset>                 <!-- 使用 Visual Studio 2022 v143 工具集 -->
+    <CharacterSet>Unicode</CharacterSet>                    <!-- 字元集為 Unicode -->
+  </PropertyGroup>
+  <!-- x64 平台的 Release 組態設定 -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>   <!-- 組建類型為動態連結庫 (DLL) -->
+    <UseDebugLibraries>false</UseDebugLibraries>            <!-- 不使用偵錯函式庫 -->
+    <PlatformToolset>v143</PlatformToolset>                 <!-- 使用 Visual Studio 2022 v143 工具集 -->
+    <WholeProgramOptimization>true</WholeProgramOptimization> <!-- 啟用全程式最佳化 -->
+    <CharacterSet>Unicode</CharacterSet>                    <!-- 字元集為 Unicode -->
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <!-- 匯入擴充功能設定 -->
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <!-- 匯入共用項目設定 -->
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <!-- 匯入 Win32 平台的屬性表 -->
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <!-- 匯入 x64 平台的屬性表 -->
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <!-- 使用者巨集定義 -->
+  <PropertyGroup Label="UserMacros" />
+  <!-- Win32 平台 Debug 組態的編譯和連結設定 -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>              <!-- 警告等級為 Level3 -->
+      <SDLCheck>true</SDLCheck>                       <!-- 啟用 SDL 檢查 -->
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>  <!-- 預處理器定義 -->
+      <ConformanceMode>true</ConformanceMode>         <!-- 啟用標準符合模式 -->
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>                  <!-- 子系統為主控台應用程式 -->
+      <GenerateDebugInformation>true</GenerateDebugInformation>  <!-- 產生偵錯資訊 -->
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- Win32 平台 Release 組態的編譯和連結設定 -->
+ <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>              <!-- 警告等級為 Level3 -->
+      <FunctionLevelLinking>true</FunctionLevelLinking> <!-- 啟用函式層級連結 -->
+      <IntrinsicFunctions>true</IntrinsicFunctions>   <!-- 啟用內建函式 -->
+      <SDLCheck>true</SDLCheck>                       <!-- 啟用 SDL 檢查 -->
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>  <!-- 預處理器定義 -->
+      <ConformanceMode>true</ConformanceMode>         <!-- 啟用標準符合模式 -->
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>                  <!-- 子系統為主控台應用程式 -->
+      <GenerateDebugInformation>true</GenerateDebugInformation>  <!-- 產生偵錯資訊 -->
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- x64 平台 Debug 組態的編譯和連結設定 -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>              <!-- 警告等級為 Level3 -->
+      <SDLCheck>true</SDLCheck>                       <!-- 啟用 SDL 檢查 -->
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>  <!-- 預處理器定義 -->
+      <ConformanceMode>true</ConformanceMode>         <!-- 啟用標準符合模式 -->
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>                  <!-- 子系統為主控台應用程式 -->
+      <GenerateDebugInformation>true</GenerateDebugInformation>  <!-- 產生偵錯資訊 -->
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- x64 平台 Release 組態的編譯和連結設定，這是主要的 DLL 組態 -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>              <!-- 警告等級為 Level3 -->
+      <FunctionLevelLinking>true</FunctionLevelLinking> <!-- 啟用函式層級連結 -->
+      <IntrinsicFunctions>true</IntrinsicFunctions>   <!-- 啟用內建函式 -->
+      <SDLCheck>true</SDLCheck>                       <!-- 啟用 SDL 檢查 -->
+      <PreprocessorDefinitions>WIN32;_WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>  <!-- 預處理器定義 -->
+      <ConformanceMode>true</ConformanceMode>         <!-- 啟用標準符合模式 -->
+      <LanguageStandard>stdcpp20</LanguageStandard>   <!-- 使用 C++20 標準 (但原始碼為 C 語言) -->
+      <!-- FreeRDP 相關的標頭檔案搜尋路徑 -->
+      <AdditionalIncludeDirectories>D:\workspace\4Games\rdp\freerdp\FreeRDP\include;D:\workspace\4Games\rdp\freerdp\FreeRDP\winpr\include;D:\workspace\4Games\rdp\freerdp\FreeRDP\build\include;D:\workspace\4Games\rdp\freerdp\FreeRDP\build\winpr\include;D:\workspace\4Games\rdp\freerdp\vcpkg\installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <CompileAs>CompileAsC</CompileAs>                <!-- 將原始碼視為 C 語言編譯 -->
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>                  <!-- 子系統為主控台應用程式 (即使這是 DLL) -->
+      <GenerateDebugInformation>true</GenerateDebugInformation>  <!-- 產生偵錯資訊 -->
+      <!-- FreeRDP 相關的函式庫搜尋路徑 -->
+      <AdditionalLibraryDirectories>D:\workspace\4Games\rdp\freerdp\FreeRDP\build\libfreerdp\Release;D:\workspace\4Games\rdp\freerdp\FreeRDP\build\winpr\libwinpr\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <!-- 需要連結的函式庫 -->
+      <AdditionalDependencies>freerdp3.lib;winpr3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- 專案包含的原始碼檔案 -->
+  <ItemGroup>
+    <ClCompile Include="RdpBridge.c" />                <!-- RdpBridge 的主要實作檔案 -->
+  </ItemGroup>
+  <!-- 專案包含的標頭檔案 -->
+  <ItemGroup>
+    <ClInclude Include="RdpBridge.h" />                <!-- RdpBridge 的公開介面宣告 -->
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <!-- 匯入擴充功能目標 -->
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
