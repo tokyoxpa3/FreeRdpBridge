@@ -180,7 +180,7 @@ RdpBridge 採用兩階段登入策略：
 import ctypes
 
 # 載入 DLL
-bridge = ctypes.CDLL('./libs/RdpBridge.dll')
+bridge = ctypes.CDLL('./libs/rdp/RdpBridge.dll')
 
 # 建立連線
 rdp_instance = bridge.rdpb_connect(b"192.168.1.100", 3389, b"username", b"password", 1920, 1080, 32)
