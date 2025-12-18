@@ -6,9 +6,10 @@ RdpBridge 是一個用於 RDP (Remote Desktop Protocol) 連線的 C 語言動態
 
 - **簡化的 RDP 連線 API**：封裝複雜的 FreeRDP 初始化流程
 - **雙模式認證**：支援自動登入 (NLA) 和手動登入 (GUI) 模式
-- **共享記憶體影像傳輸**：使用高效能的共享記憶體機制傳輸桌面影像
-- **輸入控制**：支援鍵盤掃描碼和滑鼠事件的發送
+- **動態共享記憶體影像傳輸**：使用高效能的共享記憶體機制傳輸桌面影像，每個連線實例有獨立的共享記憶體名稱
+- **輸入控制**：支援鍵盤掃描碼和滑鼠事件的發送（包括滾輪和中鍵）
 - **連線狀態管理**：提供連線檢查和資源清理功能
+- **鍵盤鎖定狀態同步**：支援同步 NumLock/CapsLock/ScrollLock 狀態
 
 ## 架構設計
 
@@ -16,15 +17,15 @@ RdpBridge 是一個用於 RDP (Remote Desktop Protocol) 連線的 C 語言動態
 
 RdpBridge 使用 Windows 共享記憶體機制在不同進程間高效傳輸影像資料：
 
-- **名稱**：`Local\RdpBridgeMem`
-- **大小**：最大支援 1920x1080 解析度的 BGRA32 影像
+- **名稱**：動態生成，格式為 `Local\RdpBridgeMem_<instance_address>`
+- **大小**：根據解析度動態調整
 - **結構**：
   - `ShmHeader`：包含影像的寬度、高度、步幅和框架 ID
-  - `pPixelData`：指向實際影像像素資料的指標
+ - `pPixelData`：指向實際影像像素資料的指標
 
 ### 同步機制
 
-- 使用命名互斥鎖 (mutex) `Local\RdpBridgeMutex` 確保多執行緒存取共享記憶體的安全性
+- 使用命名互斥鎖 (mutex) `Local\RdpBridgeMutex_<instance_address>` 確保多執行緒存取共享記憶體的安全性
 
 ## API 函數說明
 
@@ -34,20 +35,21 @@ RdpBridge 使用 Windows 共享記憶體機制在不同進程間高效傳輸影�
 建立 RDP 連線的主函數
 
 ```c
-freerdp* rdpb_connect(const char* ip, int port, const char* username, const char* password, int width, int height);
+freerdp* rdpb_connect(const char* ip, int port, const char* username, const char* password, int width, int height, int color_depth);
 ```
 
 - **參數**：
   - `ip`：目標 RDP 伺服器 IP 位址
-  - `port`：RDP 連接埠 (預設 3389)
+ - `port`：RDP 連接埠 (預設 3389)
   - `username`：使用者名稱
   - `password`：使用者密碼
   - `width`：桌面寬度
   - `height`：桌面高度
+  - `color_depth`：色彩深度 (例如 16, 24, 32)
 - **回傳值**：成功時回傳 freerdp 實例指標，失敗時回傳 NULL
 - **功能**：
-  - 嘗試使用 NLA (Network Level Authentication) 自動登入
-  - 若自動登入失敗，則回退到手動登入模式
+ - 嘗試使用 NLA (Network Level Authentication) 自動登入
+ - 若自動登入失敗，則回退到手動登入模式
 
 #### `rdpb_free`
 釋放 RDP 連線資源
@@ -71,7 +73,7 @@ int rdpb_step(freerdp* instance);
 - **參數**：freerdp 實例指標
 - **回傳值**：連線正常時回傳 1，連線中斷時回傳 0
 - **功能**：
-  - 檢查並處理 RDP 事件
+ - 檢查並處理 RDP 事件
   - 將最新的桌面影像更新到共享記憶體
 
 #### `rdpb_check_connection`
@@ -107,9 +109,34 @@ void rdpb_send_mouse(freerdp* instance, int flags, int x, int y);
 
 - **參數**：
   - `instance`：freerdp 實例指標
-  - `flags`：滑鼠事件旗標 (0=移動, 1=左鍵按下, 2=左鍵釋放, 3=右鍵按下, 4=右鍵釋放)
+  - `flags`：滑鼠事件旗標 (0=移動, 1=左鍵按下, 2=左鍵釋放, 3=右鍵按下, 4=右鍵釋放, 5=滾輪向上, 6=滾輪向下, 7=中鍵按下, 8=中鍵釋放)
   - `x`：X 座標
   - `y`：Y 座標
+
+### 狀態同步與資源管理
+
+#### `rdpb_sync_locks`
+同步鍵盤鎖定狀態 (NumLock, CapsLock, ScrollLock)
+
+```c
+void rdpb_sync_locks(freerdp* instance, int flags);
+```
+
+- **參數**：
+  - `instance`：freerdp 實例指標
+  - `flags`：鎖定旗標 (1=ScrollLock, 2=NumLock, 4=CapsLock)
+- **功能**：將本機鍵盤鎖定狀態同步到遠端桌面
+
+#### `rdpb_get_shm_name`
+取得該實例專屬的共享記憶體名稱
+
+```c
+const char* rdpb_get_shm_name(freerdp* instance);
+```
+
+- **參數**：freerdp 實例指標
+- **回傳值**：該實例的共享記憶體名稱字串
+- **功能**：讓 Python 端能取得正確的共享記憶體名稱以進行影像讀取
 
 ## 技術細節
 
@@ -121,6 +148,10 @@ RdpBridge 使用以下重要的 RDP 設定來優化連線品質：
 - `SupportGraphicsPipeline = TRUE`：啟用圖形管線
 - `GfxH264 = TRUE`：使用 H.264 編碼
 - `GfxAVC444 = TRUE`：使用高品質 AVC444 編碼
+
+### 動態共享記憶體機制
+
+RdpBridge 為每個連線實例動態生成獨特的共享記憶體名稱，格式為 `Local\RdpBridgeMem_<instance_address>`，確保多連線同時運行時不會互相干擾。
 
 ### 雙模式登入策略
 
@@ -152,7 +183,13 @@ import ctypes
 bridge = ctypes.CDLL('./libs/RdpBridge.dll')
 
 # 建立連線
-rdp_instance = bridge.rdpb_connect(b"192.168.1.100", 3389, b"username", b"password", 1920, 1080)
+rdp_instance = bridge.rdpb_connect(b"192.168.1.100", 3389, b"username", b"password", 1920, 1080, 32)
+
+# 取得共享記憶體名稱
+shm_name = bridge.rdpb_get_shm_name(rdp_instance)
+
+# 同步鍵盤鎖定狀態
+bridge.rdpb_sync_locks(rdp_instance, 2)  # 開啟 NumLock
 
 # 定期處理連線
 while bridge.rdpb_check_connection(rdp_instance):

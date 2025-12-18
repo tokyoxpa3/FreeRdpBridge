@@ -72,6 +72,16 @@ extern "C" {
      */
     EXPORT_FUNC BOOL rdpb_check_connection(freerdp* instance);
 
+    /**
+     * @brief 同步鍵盤鎖定狀態 (NumLock, CapsLock, ScrollLock)
+     * @param instance freerdp 實例指標
+     * @param flags 鎖定旗標 (1=ScrollLock, 2=NumLock, 4=CapsLock)
+     */
+    EXPORT_FUNC void rdpb_sync_locks(freerdp* instance, int flags);
+
+    // [新增] 匯出函數：讓 Python 取得正確的 SHM 名稱
+    EXPORT_FUNC const char* rdpb_get_shm_name(freerdp* instance);
+
 #ifdef __cplusplus
 }
 #endif
