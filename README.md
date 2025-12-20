@@ -56,6 +56,8 @@ RdpBridge 使用 Windows 共享記憶體機制在不同進程間高效傳輸影�
 - pynput
 - pywin32
 - PySide6
+- PyOpenGL
+- PyOpenGL_accelerate
 
 ## 安裝方式
 
