@@ -8,79 +8,82 @@ extern "C" {
 #endif
 
 #ifdef _WIN32
-// 在 Windows 平台上，使用 __declspec(dllexport) 匯出函數
+// On Windows platform, use __declspec(dllexport) to export functions
 #define EXPORT_FUNC __declspec(dllexport)
 #else
-// 在非 Windows 平台上，不需要特殊的匯出修飾符
+// On non-Windows platforms, no special export modifier is needed
 #define EXPORT_FUNC
 #endif
 
-    // 連線與資源管理函數
+    // Connection and resource management functions
     /**
-     * @brief 建立 RDP 連線
-     * @param ip RDP 伺服器 IP 位址
-     * @param port RDP 連接埠 (通常為 3389)
-     * @param username 使用者名稱
-     * @param password 使用者密碼
-     * @param width 桌面寬度
-     * @param height 桌面高度
-     * @param color_depth 色彩深度 (例如 16, 24, 32)
-     * @return 成功時返回 freerdp 實例指標，失敗時返回 NULL
-     * @details 此函數會先嘗試使用 NLA 自動登入，若失敗則回退到手動登入模式
+     * @brief Establish RDP connection
+     * @param ip RDP server IP address
+     * @param port RDP port (usually 3389)
+     * @param username Username
+     * @param password User password
+     * @param width Desktop width
+     * @param height Desktop height
+     * @param color_depth Color depth (e.g., 16, 24, 32)
+     * @return Returns pointer to freerdp instance on success, NULL on failure
+     * @details This function first tries automatic login using NLA, and falls back to manual login mode if it fails
      */
     EXPORT_FUNC freerdp* rdpb_connect(const char* ip, int port, const char* username, const char* password, int width, int height, int color_depth);
     
     /**
-     * @brief 釋放 RDP 連線資源
-     * @param instance freerdp 實例指標
-     * @details 斷開連線並釋放所有相關資源，包括共享記憶體
+     * @brief Release RDP connection resources
+     * @param instance Pointer to freerdp instance
+     * @details Disconnect and release all associated resources, including shared memory
      */
     EXPORT_FUNC void rdpb_free(freerdp* instance);
 
-    // 連線維護與影像串流函數
+    // Connection maintenance and image streaming functions
     /**
-     * @brief 處理 RDP 連線的心跳和影像更新
-     * @param instance freerdp 實例指標
-     * @return 連線正常時返回 1，連線中斷時返回 0
-     * @details 此函數處理 RDP 事件並將最新影像更新到共享記憶體
+     * @brief Handle RDP connection heartbeat and image updates
+     * @param instance Pointer to freerdp instance
+     * @return Returns 1 when connection is normal, 0 when connection is interrupted
+     * @details This function handles RDP events and updates the latest image to shared memory
      */
     EXPORT_FUNC int rdpb_step(freerdp* instance);
 
-    // 輸入控制函數
+    // Input control functions
     /**
-     * @brief 發送鍵盤掃描碼到遠端桌面
-     * @param instance freerdp 實例指標
-     * @param scancode 鍵盤掃描碼
-     * @param flags 按鍵狀態旗標 (1=按下, 0=釋放; 2=延伸鍵)
+     * @brief Send keyboard scan code to remote desktop
+     * @param instance Pointer to freerdp instance
+     * @param scancode Keyboard scan code
+     * @param flags Key state flags (1=pressed, 0=released; 2=extended key)
      */
     EXPORT_FUNC void rdpb_send_scancode(freerdp* instance, int scancode, int flags);
     
     /**
-     * @brief 發送滑鼠事件到遠端桌面
-     * @param instance freerdp 實例指標
-     * @param flags 滑鼠事件旗標 (0=移動, 1=左鍵按下, 2=左鍵釋放, 3=右鍵按下, 4=右鍵釋放)
-     * @param x X 座標
-     * @param y Y 座標
+     * @brief Send mouse event to remote desktop
+     * @param instance Pointer to freerdp instance
+     * @param flags Mouse event flags (0=move, 1=left button down, 2=left button up, 3=right button down, 4=right button up)
+     * @param x X coordinate
+     * @param y Y coordinate
      */
     EXPORT_FUNC void rdpb_send_mouse(freerdp* instance, int flags, int x, int y);
 
-    // 狀態檢查函數
+    // Status check functions
     /**
-     * @brief 檢查 RDP 連線狀態
-     * @param instance freerdp 實例指標
-     * @return 連線正常時返回 TRUE，否則返回 FALSE
+     * @brief Check RDP connection status
+     * @param instance Pointer to freerdp instance
+     * @return Returns TRUE when connection is normal, otherwise returns FALSE
      */
     EXPORT_FUNC BOOL rdpb_check_connection(freerdp* instance);
 
     /**
-     * @brief 同步鍵盤鎖定狀態 (NumLock, CapsLock, ScrollLock)
-     * @param instance freerdp 實例指標
-     * @param flags 鎖定旗標 (1=ScrollLock, 2=NumLock, 4=CapsLock)
+     * @brief Synchronize keyboard lock states (NumLock, CapsLock, ScrollLock)
+     * @param instance Pointer to freerdp instance
+     * @param flags Lock flags (1=ScrollLock, 2=NumLock, 4=CapsLock)
      */
     EXPORT_FUNC void rdpb_sync_locks(freerdp* instance, int flags);
 
-    // [新增] 匯出函數：讓 Python 取得正確的 SHM 名稱
+    // [Added] Export function: Allow Python to get the correct SHM name
     EXPORT_FUNC const char* rdpb_get_shm_name(freerdp* instance);
+
+    // [Added] Export function: Allow Python to get the event name
+    EXPORT_FUNC const char* rdpb_get_event_name(freerdp* instance);
 
 #ifdef __cplusplus
 }

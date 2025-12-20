@@ -8,7 +8,8 @@
 - **滑鼠控制**：支援完整的滑鼠操作（點擊、移動、滾輪、中鍵）
 - **鍵盤控制**：支援完整的鍵盤輸入（包括修飾鍵和功能鍵）
 - **GPU 加速渲染**：使用 PySide6 QOpenGLWidget 進行硬體加速顯示
-- **零複製記憶體管理**：使用 memoryview 實現零複製影像傳輸
+- **三級效能優化**：實現 Level 1-3 的逐層效能優化架構
+- **零複製記憶體管理**：使用 memoryview 和 gdi_init_ex 實現零複製影像傳輸
 - **多執行緒架構**：確保 UI 流暢性
 - **鍵盤鎖定狀態同步**：自動同步本機與遠端的 NumLock/CapsLock/ScrollLock 狀態
 - **防手震機制**：避免滑鼠快速點擊時的誤觸問題
@@ -104,6 +105,11 @@ python rdp_client_gpu.py
 - **RdpBackend 類別**：負責 RDP 連線管理和影像串流，支援動態共享記憶體名稱
 - **HeartbeatThread 類別**：處理 RDP 連線心跳和斷線檢測
 - **RdpGLWidget 類別**：使用 OpenGL GPU 加速的影像顯示組件，支援鍵盤鎖定狀態同步
+- **FrameWatcherThread 類別**：使用 Windows 事件機制監控幀更新，實現高效的事件驅動更新
+- **三級效能優化架構**：
+  - Level 1：使用 glTexSubImage2D 替代傳統繪圖方法，直接更新 VRAM 紋理
+  - Level 2：事件驅動架構取代輪詢，降低 CPU 使用率
+  - Level 3：使用 gdi_init_ex 實現 C 端零拷貝，直接綁定共享記憶體指標
 - **共享記憶體 (SHM)**：用於高效能影像資料傳輸，每個連線實例有獨立的共享記憶體
 - **memoryview 零複製技術**：避免不必要的記憶體複製
 
@@ -156,6 +162,26 @@ python rdp_client_gpu.py
 ## 記憶體管理
 
 使用動態共享記憶體機制和 memoryview 零複製技術進行影像資料傳輸，確保高效能串流。每個 RDP 連線實例都有其專屬的共享記憶體空間。
+## 三級效能優化架構
+
+本專案實現了三級效能優化架構，逐層提升效能表現：
+
+### Level 1 (簡單且有效)：OpenGL 渲染優化
+- 修改 Python 的渲染邏輯，改用 `glTexSubImage2D` 替代傳統繪圖方法
+- 直接更新 VRAM 中的紋理數據，避免重新分配紋理記憶體
+- 使用純 OpenGL 渲染管道，避免 QPainter 與 OpenGL 的衝突
+
+### Level 2 (減少 CPU)：事件驅動架構
+- 在 C 與 Python 之間建立 Event Object 通知機制，取代 QTimer 輪詢
+- 採用 Windows 事件機制實現高效的幀更新通知，取代傳統的輪詢方式
+- 透過 `FrameWatcherThread` 監聽由 RdpBridge 發出的命名事件，當有新幀可用時才觸發更新
+- 使用 `WaitForSingleObject` 實現低功耗睡眠模式，大幅降低 CPU 使用率
+
+### Level 3 (進階)：C 端零拷貝技術
+- 實作 `gdi_init_ex` 達成真正意義上的 C 端零拷貝
+- 在 C 端直接將像素數據寫入共享記憶體，消除記憶體複製開銷
+- 使用 `gdi_init_ex` 直接綁定共享記憶體指標，實現真正的零拷貝傳輸
+
 
 ## 設計考量
 
@@ -165,6 +191,9 @@ python rdp_client_gpu.py
 - **即時性**：移除不必要的延遲，確保即時響應
 - **多連線支援**：每個連線實例有獨立的共享記憶體空間
 - **狀態同步**：自動同步鍵盤鎖定狀態
+- **三級效能優化**：實現 Level 1-3 的逐層效能提升架構，包含 OpenGL 渲染優化、事件驅動機制和 C 端零拷貝技術
+- **純 GPU 渲染管道**：完全使用 OpenGL 渲染，避免與 QPainter 的衝突
+- **高效事件通知**：使用 Windows 事件機制實現低功耗的幀更新通知
 
 ## 已知問題
 

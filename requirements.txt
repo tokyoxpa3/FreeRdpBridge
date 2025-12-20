@@ -3,3 +3,5 @@ opencv-python
 pynput
 pywin32
 PySide6
+PyOpenGL
+PyOpenGL_accelerate

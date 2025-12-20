@@ -12,10 +12,10 @@
 
 #define MAX_WIDTH 1920
 #define MAX_HEIGHT 1080
-// 基本標頭 + 像素資料
+// Basic header + pixel data
 #define CALC_SHM_SIZE(w, h) (sizeof(ShmHeader) + ((w) * (h) * 4))
 
-// 共享記憶體標頭
+// Shared memory header
 typedef struct {
     uint32_t width;
     uint32_t height;
@@ -23,32 +23,34 @@ typedef struct {
     uint32_t frameId;
 } ShmHeader;
 
-// [關鍵修改] 自定義 Context 結構，包含每個連線獨有的資源
+// [Key modification] Custom Context structure, containing resources unique to each connection
 typedef struct {
-    rdpContext _p; // 必須是第一個成員，繼承 FreeRDP context
+    rdpContext _p; // Must be the first member, inheriting FreeRDP context
 
-    // 每個實例獨有的資源句柄
+    // Resources handles unique to each instance
     HANDLE hMapFile;
     void* pSharedMem;
     HANDLE hMutex;
+    HANDLE hEvent;         // [Added] Event handle
     ShmHeader* pHeader;
     uint8_t* pPixelData;
 
-    // 每個實例獨有的名稱
+    // Names unique to each instance
     char shmName[128];
     char mutexName[128];
+    char eventName[128];   // [Added] Event name
 
-    // 紀錄當前共享記憶體大小，避免重複開銷
+    // Record current shared memory size to avoid repeated overhead
     size_t currentShmSize;
 } BridgeContext;
 
-// 初始化該 Context 的共享記憶體
+// Initialize shared memory for this Context
 static BOOL Shm_Init(BridgeContext* ctx, int width, int height) {
     if (!ctx) return FALSE;
-    if (ctx->hMapFile) return TRUE; // 已經初始化過
+    if (ctx->hMapFile) return TRUE; // Already initialized
 
-    // 使用 Context 內部的唯一名稱
-    size_t size = CALC_SHM_SIZE(MAX_WIDTH, MAX_HEIGHT); // 分配最大空間以防解析度變更
+    // Use unique name within the Context
+    size_t size = CALC_SHM_SIZE(MAX_WIDTH, MAX_HEIGHT); // Allocate maximum space to prevent resolution changes
 
     ctx->hMapFile = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, (DWORD)size, ctx->shmName);
     if (!ctx->hMapFile) {
@@ -66,74 +68,71 @@ static BOOL Shm_Init(BridgeContext* ctx, int width, int height) {
     ctx->pHeader = (ShmHeader*)ctx->pSharedMem;
     ctx->pPixelData = (uint8_t*)ctx->pSharedMem + sizeof(ShmHeader);
 
-    // 初始化標頭
+    // Initialize header
     ctx->pHeader->width = 0;
     ctx->pHeader->height = 0;
     ctx->pHeader->frameId = 0;
     ctx->currentShmSize = size;
 
-    // 建立互斥鎖
+    // Create mutex
     ctx->hMutex = CreateMutexA(NULL, FALSE, ctx->mutexName);
+    
+    // [Added] Create event
+	sprintf_s(ctx->eventName, 128, "Local\\RdpBridgeEvent_%p", ctx);
+    ctx->hEvent = CreateEventA(NULL, FALSE, FALSE, ctx->eventName); // Auto-reset event
     return TRUE;
 }
 
-// 釋放資源
+// Release resources
 static void Shm_Free(BridgeContext* ctx) {
     if (!ctx) return;
     if (ctx->pSharedMem) { UnmapViewOfFile(ctx->pSharedMem); ctx->pSharedMem = NULL; }
     if (ctx->hMapFile) { CloseHandle(ctx->hMapFile); ctx->hMapFile = NULL; }
     if (ctx->hMutex) { CloseHandle(ctx->hMutex); ctx->hMutex = NULL; }
+    if (ctx->hEvent) { CloseHandle(ctx->hEvent); ctx->hEvent = NULL; }
 }
 
-// 更新影像
+// Update image
 static void Shm_Update(freerdp* instance) {
     if (!instance || !instance->context) return;
-
-    // 轉型為我們自定義的 Context
     BridgeContext* ctx = (BridgeContext*)instance->context;
 
-    if (!ctx->pSharedMem || !ctx->hMutex) return;
+    if (!ctx->pSharedMem || !ctx->hMutex || !ctx->hEvent) return;
 
-    // 檢查 GDI 是否就緒
-    if (!instance->context->gdi || !instance->context->gdi->primary || !instance->context->gdi->primary->bitmap) return;
-
-    rdpGdi* gdi = instance->context->gdi;
-    int width = gdi->width;
-    int height = gdi->height;
-    int stride = width * 4;
-
-    if (width > MAX_WIDTH || height > MAX_HEIGHT) return;
-
-    // 鎖定並寫入
+    // 鎖定標頭資訊
     WaitForSingleObject(ctx->hMutex, INFINITE);
 
-    ctx->pHeader->width = width;
-    ctx->pHeader->height = height;
-    ctx->pHeader->stride = stride;
-
-    memcpy(ctx->pPixelData, gdi->primary->bitmap->data, stride * height);
-
-    ctx->pHeader->frameId++; // 更新計數器
+    rdpGdi* gdi = instance->context->gdi;
+    ctx->pHeader->width = gdi->width;
+    ctx->pHeader->height = gdi->height;
+    ctx->pHeader->stride = gdi->width * 4;
+    
+    // [重要] 這裡不需要 memcpy 了！影像已經由 FreeRDP 自動填入 pPixelData
+    
+    ctx->pHeader->frameId++;
 
     ReleaseMutex(ctx->hMutex);
+    
+    // 敲門通知 Python
+    SetEvent(ctx->hEvent);
 }
 
 static BOOL Bridge_PreConnect(freerdp* instance) {
     if (!instance || !instance->context || !instance->context->settings) return FALSE;
     rdpSettings* settings = instance->context->settings;
 
-    // 產生唯一的 SHM 名稱 (基於 instance 指標位址)
-    // 這樣不同的 instance 就會有不同的記憶體區塊
-    BridgeContext* ctx = (BridgeContext*)instance->context;
-    sprintf_s(ctx->shmName, 128, "Local\\RdpBridgeMem_%p", instance);
-    sprintf_s(ctx->mutexName, 128, "Local\\RdpBridgeMutex_%p", instance);
-
-    printf("[Bridge] Initializing SHM: %s\n", ctx->shmName);
-
-    // 初始化 SHM
-    if (!Shm_Init(ctx, settings->DesktopWidth, settings->DesktopHeight)) {
-        return FALSE;
-    }
+    // Generate unique SHM name (based on instance pointer address)
+        // So different instances will have different memory blocks
+        BridgeContext* ctx = (BridgeContext*)instance->context;
+        sprintf_s(ctx->shmName, 128, "Local\\RdpBridgeMem_%p", instance);
+        sprintf_s(ctx->mutexName, 128, "Local\\RdpBridgeMutex_%p", instance);
+    
+        printf("[Bridge] Initializing SHM: %s\n", ctx->shmName);
+    
+        // Initialize SHM
+        if (!Shm_Init(ctx, settings->DesktopWidth, settings->DesktopHeight)) {
+            return FALSE;
+        }
 
     settings->SoftwareGdi = FALSE;
     settings->SupportGraphicsPipeline = TRUE;
@@ -150,19 +149,26 @@ static BOOL Bridge_PreConnect(freerdp* instance) {
 }
 
 static BOOL Bridge_PostConnect(freerdp* instance) {
-    if (!gdi_init(instance, PIXEL_FORMAT_BGRA32)) {
-        printf("[Bridge Warning] GDI init failed\n");
+    if (!instance || !instance->context || !instance->context->settings) return FALSE;
+
+    BridgeContext* ctx = (BridgeContext*)instance->context;
+    rdpSettings* settings = instance->context->settings; // [修正點]
+
+    // 定義格式：BGRA32 匹配 Python 端
+    UINT32 pixel_format = PIXEL_FORMAT_BGRA32;
+    
+    // [修正點] 從 settings 獲取寬度
+    int stride = settings->DesktopWidth * 4;
+
+    // [核心優化] 使用 gdi_init_ex 直接綁定 SHM 指標
+    if (!gdi_init_ex(instance, pixel_format, stride, ctx->pPixelData, NULL)) {
+        printf("[Bridge Error] GDI Zero-copy init failed\n");
+        return FALSE;
     }
 
-    // 建議：這裡可以註解掉，改由 Python 端在連線成功後動態發送正確的狀態
-    // 或者將 1 (ScrollLock) 改為 2 (NumLock) 以預設開啟
-    /*
-    if (instance->context->input && instance->context->input->SynchronizeEvent) {
-        // KBD_SYNC_NUM_LOCK = 2
-        instance->context->input->SynchronizeEvent(instance->context->input, 2);
-    }
-    */
-
+    printf("[Bridge] Zero-copy GDI initialized (%dx%d). Buffer: %p\n",
+           settings->DesktopWidth, settings->DesktopHeight, ctx->pPixelData);
+    
     return TRUE;
 }
 
@@ -170,11 +176,11 @@ static freerdp* _connect_attempt(const char* ip, int port, const char* username,
     freerdp* instance = freerdp_new();
     if (!instance) return NULL;
 
-    // [關鍵] 設定 Context 大小為我們自定義結構的大小
-    instance->ContextSize = sizeof(BridgeContext);
-
-    instance->PreConnect = Bridge_PreConnect;
-    instance->PostConnect = Bridge_PostConnect;
+    // [Key] Set Context size to our custom structure size
+        instance->ContextSize = sizeof(BridgeContext);
+    
+        instance->PreConnect = Bridge_PreConnect;
+        instance->PostConnect = Bridge_PostConnect;
 
     if (!freerdp_context_new(instance)) {
         freerdp_free(instance);
@@ -213,11 +219,11 @@ static freerdp* _connect_attempt(const char* ip, int port, const char* username,
     }
 
     if (!freerdp_connect(instance)) {
-        // 連線失敗時，PreConnect 裡建立的 SHM 會在 context_free 時需要釋放
-        // 但由於我們把釋放寫在 rdpb_free，這裡手動清理一下比較保險
-        BridgeContext* ctx = (BridgeContext*)instance->context;
-        Shm_Free(ctx);
-
+        // When connection fails, the SHM created in PreConnect needs to be released during context_free
+                // But since we put the release in rdpb_free, it's safer to manually clean up here
+                BridgeContext* ctx = (BridgeContext*)instance->context;
+                Shm_Free(ctx);
+        
         freerdp_context_free(instance);
         freerdp_free(instance);
         return NULL;
@@ -227,10 +233,10 @@ static freerdp* _connect_attempt(const char* ip, int port, const char* username,
 }
 
 EXPORT_FUNC freerdp* rdpb_connect(const char* ip, int port, const char* username, const char* password, int width, int height, int color_depth) {
-    // Shm_Init 已移至 PreConnect，這裡只需初始化網路庫
-    WSADATA wsaData;
-    WSAStartup(0x0202, &wsaData);
-
+    // Shm_Init has been moved to PreConnect, here we only need to initialize the network library
+        WSADATA wsaData;
+        WSAStartup(0x0202, &wsaData);
+    
     freerdp* instance = _connect_attempt(ip, port, username, password, width, height, color_depth, TRUE);
     if (instance) return instance;
 
@@ -296,7 +302,7 @@ EXPORT_FUNC BOOL rdpb_check_connection(freerdp* instance) {
     return !freerdp_shall_disconnect_context(instance->context);
 }
 
-// [新增] 匯出函數：讓 Python 取得正確的 SHM 名稱
+// [Added] Export function: Let Python get the correct SHM name
 EXPORT_FUNC const char* rdpb_get_shm_name(freerdp* instance) {
     if (!instance || !instance->context) return "";
     BridgeContext* ctx = (BridgeContext*)instance->context;
@@ -317,11 +323,17 @@ EXPORT_FUNC void rdpb_free(freerdp* instance) {
     }
 }
 
-// ... (在檔案末端加入實作)
+// ... (add implementation at the end of the file)
 
 EXPORT_FUNC void rdpb_sync_locks(freerdp* instance, int flags) {
     if (!instance || !instance->context || !instance->context->input) return;
     if (instance->context->input->SynchronizeEvent) {
         instance->context->input->SynchronizeEvent(instance->context->input, flags);
     }
+}
+
+EXPORT_FUNC const char* rdpb_get_event_name(freerdp* instance) {
+    if (!instance || !instance->context) return "";
+    BridgeContext* ctx = (BridgeContext*)instance->context;
+    return ctx->eventName;
 }

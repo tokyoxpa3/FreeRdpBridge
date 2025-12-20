@@ -5,22 +5,35 @@ import mmap
 import struct
 from ctypes import windll
 
+# 導入 Windows API
+KERNEL32 = ctypes.windll.kernel32
+WAIT_OBJECT_0 = 0x00000000
+INFINITE = 0xFFFFFFFF
+
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QImage, QPainter
+
+# --- [關鍵] 導入 OpenGL 常數 ---
+from OpenGL.GL import (
+    glGenTextures, glBindTexture, glTexImage2D, glTexSubImage2D,
+    glTexParameteri, glClear, glClearColor,
+    glBegin, glEnd, glTexCoord2f, glVertex2f, glEnable, glDisable,
+    GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, 
+    GL_LINEAR, GL_RGBA, GL_BGRA, GL_UNSIGNED_BYTE, GL_COLOR_BUFFER_BIT, GL_QUADS
+)
 
 # --- 使用者設定 ---
 # 為了測試多視窗，您可以在此腳本啟動時從命令列參數讀取不同設定，
 # 或是直接在程式碼中修改。
 RDP_IP = "127.0.0.2"
 RDP_PORT = 3389
-RDP_USER = "Admin1"
+RDP_USER = "Admin"
 RDP_PASS = ""
 
 # --- 效能關鍵設定 ---
-RDP_WIDTH = 1280
-RDP_HEIGHT = 720
+RDP_WIDTH = 800
+RDP_HEIGHT = 600
 RDP_COLOR = 16 
 
 # --- DLL 設定 ---
@@ -53,8 +66,36 @@ rdp.rdpb_get_shm_name.restype = ctypes.c_char_p
 # [新增] 定義同步鍵盤鎖定狀態的函數
 rdp.rdpb_sync_locks.argtypes = [ctypes.c_void_p, ctypes.c_int]
 
+# [新增] 定義獲取事件名稱的函數
+rdp.rdpb_get_event_name.argtypes = [ctypes.c_void_p]
+rdp.rdpb_get_event_name.restype = ctypes.c_char_p
+
 # 標頭大小固定為 4 個 uint32
 HEADER_SIZE = 16
+
+class FrameWatcherThread(QThread):
+    new_frame_signal = Signal()
+
+    def __init__(self, event_name):
+        super().__init__()
+        # 打開由 C 端建立的命名事件
+        self.h_event = KERNEL32.OpenEventW(0x00100000 | 0x0002, False, event_name)
+        self.running = True
+
+    def run(self):
+        if not self.h_event:
+            print("[Watcher] 錯誤: 無法開啟事件句柄")
+            return
+            
+        while self.running:
+            # 這裡會讓執行緒進入「極低功耗睡眠」，直到 C 端呼叫 SetEvent
+            result = KERNEL32.WaitForSingleObject(self.h_event, 500) # 每 500ms 醒來檢查一次 running 狀態
+            if result == WAIT_OBJECT_0:
+                self.new_frame_signal.emit()
+
+    def stop(self):
+        self.running = False
+        self.wait()
 
 class RdpBackend:
     def __init__(self, ip, port, user, password, width, height, color_depth):
@@ -63,7 +104,7 @@ class RdpBackend:
         
         # 建立連線實例
         self.instance = rdp.rdpb_connect(
-            ip.encode(), port, user.encode(), password.encode(), 
+            ip.encode(), port, user.encode(), password.encode(),
             width, height, color_depth
         )
         
@@ -75,15 +116,25 @@ class RdpBackend:
         shm_name_bytes = rdp.rdpb_get_shm_name(self.instance)
         self.shm_name = shm_name_bytes.decode('utf-8')
         
-        print(f"[RDP] 連線成功！共享記憶體名稱: {self.shm_name}")
+        # [新增] 獲取事件名稱
+        self.event_name = rdp.rdpb_get_event_name(self.instance).decode('utf-8')
+        
+        print(f"[RDP] 連線成功！共享記憶體名稱: {self.shm_name}, 事件名稱: {self.event_name}")
         
         self.last_sent_x = -1
         self.last_sent_y = -1
         
-        # 使用動態名稱開啟共享記憶體
-        # 初始大小給小一點沒關係，get_memory_view 會自動擴容
-        self.shm_size = 1024
-        self.shm = mmap.mmap(-1, self.shm_size, tagname=self.shm_name)
+        # [修正] 必須匹配 C 端的最大分配空間，避免 OpenGL 讀取越界
+        # 16 (Header) + 1920 * 1080 * 4 (Max Pixel Data)
+        self.MAX_SHM_SIZE = 16 + (1920 * 1080 * 4)
+        
+        # 直接開到最大，這只是虛擬地址空間，不會真的吃掉 8MB 物理內存，直到用到它
+        self.shm = mmap.mmap(-1, self.MAX_SHM_SIZE, tagname=self.shm_name)
+        self.shm_size = self.MAX_SHM_SIZE
+        
+        # [新增] 預先轉換好 ctypes 指標，避免每幀重複建立
+        self._ptr_type = ctypes.POINTER(ctypes.c_char)
+        self.base_ptr = ctypes.cast(ctypes.addressof(ctypes.c_char.from_buffer(self.shm)), ctypes.c_void_p).value
 
     def step(self):
         if not self.instance: return 0
@@ -107,6 +158,9 @@ class RdpBackend:
             pass
             
         return False, 0, 0, 0, last_fid
+
+    def get_shm_address(self):
+        return self.base_ptr
 
     def get_memory_view(self, width, height):
         # 計算需要的總大小
@@ -184,85 +238,95 @@ class RdpGLWidget(QOpenGLWidget):
     def __init__(self, backend):
         super().__init__()
         self.backend = backend
-        self.current_image = None
         self.last_fid = 0
-        self.current_mv = None
+        self.texture_id = None
+        self.tex_width = 0
+        self.tex_height = 0
         
-        # 輸入設定
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
-        # 畫面更新 Timer (盡快讀取)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.check_frame)
-        self.timer.start(0)
-
-        # --- 防手震 (Debounce) 設定 ---
+        # 1. 移除原本的 self.timer.timeout.connect(self.check_frame)
+        # self.timer.start(1) <- 刪掉或改為處理其他低頻任務
+        # self.timer = QTimer(self)  # 移除原本的 timer
+        # self.timer.timeout.connect(self.check_frame)
+        # self.timer.start(1) # 改為 1ms 避免過度占用
+        
+        # 2. 啟動事件監聽執行緒
+        self.watcher = FrameWatcherThread(self.backend.event_name)
+        self.watcher.new_frame_signal.connect(self.check_frame) # 當事件觸發時才執行 check_frame
+        self.watcher.start()
+        
+        # 滑鼠 Debounce 邏輯 (保留)
         self.debounce_timer = QTimer(self)
         self.debounce_timer.setSingleShot(True)
         self.debounce_timer.timeout.connect(self.send_delayed_release)
         self.DEBOUNCE_DELAY = 50
+        self.pending_release_button = 0
         self.pending_release_x = 0
         self.pending_release_y = 0
-        self.pending_release_button = 0
-    
-    # 新增 focusInEvent 事件處理
-    def focusInEvent(self, event):
-        self.update_lock_state()
-        super().focusInEvent(event)
 
-    def update_lock_state(self):
-        """讀取本地 Windows 鍵盤狀態並同步到遠端"""
-        # VK_NUMLOCK = 0x90, VK_CAPITAL = 0x14, VK_SCROLL = 0x91
-        # GetKeyState return low-order bit is 1 if toggled
-        num_lock = (windll.user32.GetKeyState(0x90) & 0x0001) != 0
-        caps_lock = (windll.user32.GetKeyState(0x14) & 0x0001) != 0
-        scroll_lock = (windll.user32.GetKeyState(0x91) & 0x0001) != 0
-        
-        # print(f"Syncing Locks: Num={num_lock}, Caps={caps_lock}")
-        self.backend.sync_locks(num_lock, caps_lock, scroll_lock)
+    def initializeGL(self):
+        # 建立 Texture
+        self.texture_id = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, self.texture_id)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glBindTexture(GL_TEXTURE_2D, 0)
 
-    # 修改 keyPressEvent，增加對 NumLock 按鍵本身的處理
-    def keyPressEvent(self, event):
-        if event.isAutoRepeat(): return
-        # 如果按下的是 NumLock 鍵 (Qt.Key.Key_NumLock)，除了發送 Scancode，也要更新狀態
-        if event.key() == Qt.Key.Key_NumLock:
-            # 讓 OS 處理一下狀態切換，稍後發送 Sync
-            QTimer.singleShot(100, self.update_lock_state)
-            
-        # Ctrl+Alt+End 發送 CAD
-        if event.key() == Qt.Key.Key_End and (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and (event.modifiers() & Qt.KeyboardModifier.AltModifier):
-            self.send_ctrl_alt_del()
+    def paintGL(self):
+        """完全使用 OpenGL 渲染，不使用 QPainter 避免衝突"""
+        glClearColor(0, 0, 0, 1)
+        glClear(GL_COLOR_BUFFER_BIT)
+
+        if not self.texture_id or self.tex_width == 0:
             return
-            
-        scancode, is_extended = self._map_key(event)
-        if scancode > 0:
-            self.backend.send_scancode(scancode, True, is_extended)
+
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, self.texture_id)
+        
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex2f(-1, 1)   # 左上
+        glTexCoord2f(1, 0); glVertex2f(1, 1)    # 右上
+        glTexCoord2f(1, 1); glVertex2f(1, -1)   # 右下
+        glTexCoord2f(0, 1); glVertex2f(-1, -1)  # 左下
+        glEnd()
+        
+        glBindTexture(GL_TEXTURE_2D, 0)
+        glDisable(GL_TEXTURE_2D)
 
     def check_frame(self):
+        if not self.backend.shm: return
+        
         try:
             has_new, w, h, s, fid = self.backend.check_new_frame(self.last_fid)
             if has_new:
                 self.last_fid = fid
-                # 獲取直接記憶體視圖 (Zero-copy)
-                mv = self.backend.get_memory_view(w, h)
-                self.current_mv = mv # 保持引用防止被 GC
                 
-                # 建立 QImage (Format_RGB32 對應 BGRX/BGRA 記憶體佈局)
-                self.current_image = QImage(mv, w, h, s, QImage.Format.Format_RGB32)
+                # 獲取原始地址 (整數)
+                base_addr = self.backend.get_shm_address()
+                # 加上 Header 偏移
+                pixel_data_ptr = base_addr + 16
+                
+                self.makeCurrent()
+                glBindTexture(GL_TEXTURE_2D, self.texture_id)
+                
+                # 將整數地址包裝成 c_void_p 傳給 OpenGL
+                data_ptr = ctypes.c_void_p(pixel_data_ptr)
+                
+                if w != self.tex_width or h != self.tex_height:
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, data_ptr)
+                    self.tex_width = w
+                    self.tex_height = h
+                else:
+                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, data_ptr)
+                
+                glBindTexture(GL_TEXTURE_2D, 0)
                 self.update()
         except Exception as e:
-            print(f"Frame error: {e}")
+            print(f"Update Error: {e}")
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), Qt.GlobalColor.black)
-        
-        if self.current_image and not self.current_image.isNull():
-            # 這裡直接繪製，GPU 會處理縮放
-            painter.drawImage(0, 0, self.current_image)
-
-    # --- 輸入事件處理 ---
+    # 保留滑鼠/鍵盤事件代碼 (從之前的程式碼複製過來)
     def mouseMoveEvent(self, event):
         p = event.position()
         self.backend.send_mouse(0, int(p.x()), int(p.y()))
@@ -271,7 +335,7 @@ class RdpGLWidget(QOpenGLWidget):
         p = event.position()
         # 1=Left, 3=Right
         f = {
-            Qt.MouseButton.LeftButton: 1, 
+            Qt.MouseButton.LeftButton: 1,
             Qt.MouseButton.RightButton: 3,
             Qt.MouseButton.MiddleButton: 7  # 新增這一行
         }.get(event.button(), 0)
@@ -285,7 +349,7 @@ class RdpGLWidget(QOpenGLWidget):
         p = event.position()
         # 2=Left Up, 4=Right Up
         f = {
-            Qt.MouseButton.LeftButton: 2, 
+            Qt.MouseButton.LeftButton: 2,
             Qt.MouseButton.RightButton: 4,
             Qt.MouseButton.MiddleButton: 8  # 新增這一行
         }.get(event.button(), 0)
@@ -330,6 +394,11 @@ class RdpGLWidget(QOpenGLWidget):
 
     def keyPressEvent(self, event):
         if event.isAutoRepeat(): return
+        # 如果按下的是 NumLock 鍵 (Qt.Key.Key_NumLock)，除了發送 Scancode，也要更新狀態
+        if event.key() == Qt.Key.Key_NumLock:
+            # 讓 OS 處理一下狀態切換，稍後發送 Sync
+            QTimer.singleShot(100, self.update_lock_state)
+            
         # Ctrl+Alt+End 發送 CAD
         if event.key() == Qt.Key.Key_End and (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and (event.modifiers() & Qt.KeyboardModifier.AltModifier):
             self.send_ctrl_alt_del()
@@ -344,6 +413,21 @@ class RdpGLWidget(QOpenGLWidget):
         scancode, is_extended = self._map_key(event)
         if scancode > 0:
             self.backend.send_scancode(scancode, False, is_extended)
+
+    def focusInEvent(self, event):
+        self.update_lock_state()
+        super().focusInEvent(event)
+
+    def update_lock_state(self):
+        """讀取本地 Windows 鍵盤狀態並同步到遠端"""
+        # VK_NUMLOCK = 0x90, VK_CAPITAL = 0x14, VK_SCROLL = 0x91
+        # GetKeyState return low-order bit is 1 if toggled
+        num_lock = (windll.user32.GetKeyState(0x90) & 0x0001) != 0
+        caps_lock = (windll.user32.GetKeyState(0x14) & 0x0001) != 0
+        scroll_lock = (windll.user32.GetKeyState(0x91) & 0x0001) != 0
+        
+        # print(f"Syncing Locks: Num={num_lock}, Caps={caps_lock}")
+        self.backend.sync_locks(num_lock, caps_lock, scroll_lock)
 
     def send_ctrl_alt_del(self):
         # 手動發送序列
@@ -366,6 +450,11 @@ class RdpGLWidget(QOpenGLWidget):
             ]
             return scancode, is_extended
         return 0, False
+
+    # 記得在關閉時停止執行緒
+    def closeEvent(self, event):
+        self.watcher.stop()
+        super().closeEvent(event)
 
 class MainWindow(QMainWindow):
     def __init__(self):

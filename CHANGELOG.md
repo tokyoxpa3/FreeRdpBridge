@@ -2,6 +2,25 @@
 
 所有重要變更都會記錄在此檔案中。
 
+## [1.3] - 2025-12-20
+
+### 新增功能
+- 實現三級效能優化架構 (Level 1-3)
+- Level 1: 使用 glTexSubImage2D 替代傳統繪圖方法，提升渲染效能
+- Level 2: 實作 Windows 事件驅動機制，取代高頻輪詢，大幅降低 CPU 使用率
+- Level 3: 實作 gdi_init_ex 零拷貝技術，達成 C 端真正的零記憶體複製
+
+### 技術改進
+- OpenGL 純渲染管道：完全使用 OpenGL 渲染，移除 QPainter 衝突
+- 事件驅動架構：使用 WaitForSingleObject 實現低功耗睡眠模式
+- 純 GPU 資料流：使用 glTexSubImage2D 直接更新 VRAM，避免重分配
+- C 端零拷貝：使用 gdi_init_ex 直接綁定共享記憶體指標，消除像素複製開銷
+
+### 效能優化
+- Level 1 優化：渲染管道最佳化，使用 glTexSubImage2D 更新紋理
+- Level 2 優化：CPU 使用率降低，從輪詢改為事件驅動
+- Level 3 優化：C 端零記憶體複製，直接將像素數據寫入共享記憶體
+
 ## [1.2] - 2025-12-18
 
 ### 新增功能
