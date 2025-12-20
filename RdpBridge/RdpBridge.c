@@ -42,6 +42,9 @@ typedef struct {
 
     // Record current shared memory size to avoid repeated overhead
     size_t currentShmSize;
+
+    BOOL target_visible;       // [新增] Python 設定的目標狀態
+    BOOL current_visible;      // [新增] 目前 DLL 的實際狀態
 } BridgeContext;
 
 // Initialize shared memory for this Context
@@ -337,3 +340,4 @@ EXPORT_FUNC const char* rdpb_get_event_name(freerdp* instance) {
     BridgeContext* ctx = (BridgeContext*)instance->context;
     return ctx->eventName;
 }
+

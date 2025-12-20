@@ -108,12 +108,16 @@ python rdp_client_gpu.py
 - **HeartbeatThread 類別**：處理 RDP 連線心跳和斷線檢測
 - **RdpGLWidget 類別**：使用 OpenGL GPU 加速的影像顯示組件，支援鍵盤鎖定狀態同步
 - **FrameWatcherThread 類別**：使用 Windows 事件機制監控幀更新，實現高效的事件驅動更新
+- **GlobalKeyboardHook 類別**：實現全局鍵盤鉤子，特別處理 Windows 鍵等特殊按鍵，確保在遠端桌面環境中的正常使用
+- **MainWindow 類別**：主視窗管理，包含系統托盤功能和視窗顯示/隱藏切換
 - **三級效能優化架構**：
   - Level 1：使用 glTexSubImage2D 替代傳統繪圖方法，直接更新 VRAM 紋理
   - Level 2：事件驅動架構取代輪詢，降低 CPU 使用率
   - Level 3：使用 gdi_init_ex 實現 C 端零拷貝，直接綁定共享記憶體指標
 - **共享記憶體 (SHM)**：用於高效能影像資料傳輸，每個連線實例有獨立的共享記憶體
 - **memoryview 零複製技術**：避免不必要的記憶體複製
+- **系統托盤功能**：支援視窗最小化至系統托盤，並可在背景持續接收 RDP 影像串流
+- **視窗可見性控制**：當視窗隱藏時自動停止 GPU 渲染，降低資源消耗，但仍維持 RDP 連線和影像串流接收
 
 ### 鍵盤掃描碼對應
 
@@ -184,6 +188,41 @@ python rdp_client_gpu.py
 - 在 C 端直接將像素數據寫入共享記憶體，消除記憶體複製開銷
 - 使用 `gdi_init_ex` 直接綁定共享記憶體指標，實現真正的零拷貝傳輸
 
+## 事件驅動架構
+
+### FrameWatcherThread
+- 使用 Windows 命名事件機制監控 RDP 影像更新
+- 透過 `WaitForSingleObject` 實現低功耗等待，僅在有新幀時才觸發 UI 更新
+- 避免傳統輪詢方式造成的 CPU 資源浪費
+
+### Windows API 集成
+- 使用底層 Windows API (`SetWindowsHookExW`, `GetMessage`, `TranslateMessage`, `DispatchMessage`) 實現全局鍵盤事件捕獲
+- 正確處理擴展鍵碼和特殊按鍵（如 Windows 鍵）
+
+## 系統托盤功能
+
+### 視窗管理
+- 支援將 RDP 視窗最小化至系統托盤
+- 提供「顯示 RDP 視窗」和「隱藏 RDP 視窗」選項
+- 點擊系統托盤圖示可快速切換視窗顯示狀態
+- 使用 `Ctrl+H` 快捷鍵可快速隱藏視窗
+
+### 背景模式
+- 視窗隱藏時維持 RDP 連線和影像串流接收
+- 自動停止 GPU 渲染以降低資源消耗
+- 透過 `is_ui_visible` 標誌控制 OpenGL 渲染邏輯
+
+## 全局鍵盤鉤子
+
+### 特殊按鍵處理
+- 捕獲全局 Windows 鍵事件（VK_LWIN, VK_RWIN）
+- 當 RDP 視窗為前景視窗時，將 Windows 鍵事件轉發至遠端桌面
+- 防止 Windows 鍵在遠端桌面環境中失效
+
+### 鍵盤鎖定狀態同步
+- 自動同步本機與遠端的 NumLock、CapsLock、ScrollLock 狀態
+- 在視窗獲得焦點時自動更新鎖定狀態
+- 支援手動觸發狀態同步（如按下 NumLock 鍵時）
 
 ## 設計考量
 
@@ -196,11 +235,70 @@ python rdp_client_gpu.py
 - **三級效能優化**：實現 Level 1-3 的逐層效能提升架構，包含 OpenGL 渲染優化、事件驅動機制和 C 端零拷貝技術
 - **純 GPU 渲染管道**：完全使用 OpenGL 渲染，避免與 QPainter 的衝突
 - **高效事件通知**：使用 Windows 事件機制實現低功耗的幀更新通知
+## API 函數介面
+
+### RdpBridge.dll 函數介面
+- `rdpb_connect(ip, port, username, password, width, height, color_depth)`：建立 RDP 連線
+- `rdpb_step(instance)`：處理連線心跳和影像更新
+- `rdpb_send_scancode(instance, scancode, flags)`：發送鍵盤掃描碼
+- `rdpb_send_mouse(instance, flags, x, y)`：發送滑鼠事件
+- `rdpb_free(instance)`：釋放連線資源
+- `rdpb_get_shm_name(instance)`：取得該實例專屬的共享記憶體名稱
+- `rdpb_get_event_name(instance)`：取得該實例專屬的事件名稱
+- `rdpb_sync_locks(instance, flags)`：同步鍵盤鎖定狀態
+- `rdpb_set_visibility(instance, is_visible)`：設定連線可見性
+
+### 滑鼠事件旗標
+- 0: 滑鼠移動
+- 1: 左鍵按下
+- 2: 左鍵釋放
+- 3: 右鍵按下
+- 4: 右鍵釋放
+- 5: 滾輪向上
+- 6: 滾輪向下
+- 7: 中鍵按下
+- 8: 中鍵釋放
+
+### 鍵盤鎖定狀態旗標
+- 1: ScrollLock
+- 2: NumLock
+- 4: CapsLock
 
 ## 已知問題
 
 - 在某些系統配置下可能存在游標顯示問題
 - 特定鍵盤佈局可能需要調整掃描碼對應
+
+## 故障排除
+
+### 常見問題與解決方案
+
+#### 1. 連線失敗
+- 確認目標主機的 RDP 服務是否已啟用
+- 檢查防火牆設定，確保連接埠 3389 未被封鎖
+- 驗證使用者名稱和密碼是否正確
+- 確認網路連線是否穩定
+
+#### 2. 影像顯示異常
+- 確認 GPU 驅動程式已更新至最新版本
+- 檢查是否正確安裝了 Visual C++ Redistributable
+- 嘗試調整 RDP_COLOR 設定（16, 24, 32 位元）
+
+#### 3. 輸入反應遲緩
+- 檢查網路連線品質
+- 確認共享記憶體設定是否正確
+- 驗證 OpenGL 硬體加速是否正常工作
+
+#### 4. Windows 鍵無法使用
+- 確認全局鍵盤鉤子已正確安裝
+- 檢查是否有其他應用程式佔用了相同的鍵盤事件
+- 驗證 RDP 視窗是否為前景視窗
+
+#### 5. 系統托盤功能異常
+- 確認 Qt 的系統托盤功能是否支援
+- 檢查 `setQuitOnLastWindowClosed(False)` 是否正確設定
+- 驗證 Windows API 訪問權限
+
 
 ## 授權
 
