@@ -3,27 +3,31 @@ import ctypes
 import time
 import mmap
 import struct
-from ctypes import windll, wintypes
+from ctypes import wintypes, windll
 
 # 導入對話視窗類別
 from rdp_dialog import RDPLoginDialog
 
-# --- Windows API 定義 (保持不變) ---
-user32 = ctypes.windll.user32
-KERNEL32 = ctypes.windll.kernel32
-KERNEL32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
-KERNEL32.GetModuleHandleW.restype = wintypes.HINSTANCE
-KERNEL32.GetLastError.restype = wintypes.DWORD
-WAIT_OBJECT_0 = 0x00000000
-INFINITE = 0xFFFFFFFF
+# Windows API 常數
 WH_KEYBOARD_LL = 13
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
-VK_LWIN = 0x5B
-VK_RWIN = 0x5C
+WAIT_OBJECT_0 = 0x00000000
 
+# 虛擬鍵代碼 (Virtual Keys)
+VK_LCONTROL = 0xA2
+VK_RCONTROL = 0xA3
+VK_LMENU    = 0xA4  # Left Alt
+VK_RMENU    = 0xA5  # Right Alt
+VK_LWIN     = 0x5B
+VK_RWIN     = 0x5C
+
+# 旗標
+LLKHF_EXTENDED = 0x01
+
+# 定義結構
 class KBDLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [
         ("vkCode", wintypes.DWORD),
@@ -33,13 +37,27 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
         ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))
     ]
 
-LowLevelKeyboardProc = ctypes.WINFUNCTYPE(ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+# 定義回呼函數類型 (必須使用 c_longlong 作為 restype 以支援 64位元)
+LowLevelKeyboardProc = ctypes.WINFUNCTYPE(
+    ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
+)
+
+# API 實例
+user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+# 明確定義函數簽章，防止 64 位元截斷
 user32.SetWindowsHookExW.argtypes = [ctypes.c_int, LowLevelKeyboardProc, wintypes.HINSTANCE, wintypes.DWORD]
 user32.SetWindowsHookExW.restype = wintypes.HHOOK
 user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
 user32.UnhookWindowsHookEx.restype = wintypes.BOOL
 user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
 user32.CallNextHookEx.restype = ctypes.c_longlong
+
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
+
+kernel32.GetLastError.restype = wintypes.DWORD
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox,
@@ -99,12 +117,12 @@ class FrameWatcherThread(QThread):
     new_frame_signal = Signal()
     def __init__(self, event_name):
         super().__init__()
-        self.h_event = KERNEL32.OpenEventW(0x00100000 | 0x0002, False, event_name)
+        self.h_event = kernel32.OpenEventW(0x00100000 | 0x0002, False, event_name)
         self.running = True
     def run(self):
         if not self.h_event: return
         while self.running:
-            result = KERNEL32.WaitForSingleObject(self.h_event, 500)
+            result = kernel32.WaitForSingleObject(self.h_event, 500)
             if result == WAIT_OBJECT_0:
                 self.new_frame_signal.emit()
     def stop(self):
@@ -115,29 +133,73 @@ class GlobalKeyboardHook:
     def __init__(self, rdp_widget):
         self.rdp_widget = rdp_widget
         self.hook = None
+        # 將 callback 存為成員變數，避免被垃圾回收
         self._callback = LowLevelKeyboardProc(self.hook_callback)
+
     def install(self):
-        h_instance = KERNEL32.GetModuleHandleW(None)
-        if not h_instance: h_instance = 0
+        # 獲取模組句柄
+        h_instance = kernel32.GetModuleHandleW(None)
+        
+        # 安裝鉤子 (WH_KEYBOARD_LL)
         self.hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._callback, h_instance, 0)
+        
+        # 如果因為 126 錯誤失敗，嘗試傳入 0
+        if not self.hook:
+            self.hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._callback, 0, 0)
+
+        if not self.hook:
+            print(f"[Hook] 安裝失敗！錯誤代碼: {kernel32.GetLastError()}")
+        else:
+            print(f"[Hook] 已啟動：成功攔截全局 Ctrl/Alt/Win 鍵")
+
     def uninstall(self):
         if self.hook:
             user32.UnhookWindowsHookEx(self.hook)
             self.hook = None
+            print("[Hook] 已卸載")
+
     def hook_callback(self, nCode, wParam, lParam):
-        if nCode == 0:
-            try:
-                kb = KBDLLHOOKSTRUCT.from_address(lParam)
-                vk_code = kb.vkCode
-                if vk_code in [VK_LWIN, VK_RWIN]:
-                    active_hwnd = user32.GetForegroundWindow()
-                    target_hwnd = int(self.rdp_widget.window().winId())
-                    if active_hwnd == target_hwnd:
-                        is_down = wParam in [WM_KEYDOWN, WM_SYSKEYDOWN]
-                        scancode = 0x5B if vk_code == VK_LWIN else 0x5C
-                        self.rdp_widget.backend.send_scancode(scancode, is_down, True)
-                        return 1
-            except: pass
+        if nCode == 0: # HC_ACTION
+            kb = KBDLLHOOKSTRUCT.from_address(lParam)
+            vk = kb.vkCode
+
+            # 定義需要攔截的修飾鍵
+            targets = [VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN]
+
+            if vk in targets:
+                # 檢查當前視窗是否為我們的 RDP 視窗
+                active_hwnd = user32.GetForegroundWindow()
+                target_hwnd = int(self.rdp_widget.window().winId())
+
+                if active_hwnd == target_hwnd:
+                    # 判斷按下或放開
+                    is_down = wParam in [WM_KEYDOWN, WM_SYSKEYDOWN]
+                    
+                    # 決定 RDP 專用 Scancode 與 Extended 屬性
+                    scancode = 0
+                    is_ext = (kb.flags & LLKHF_EXTENDED) != 0
+
+                    if vk in [VK_LCONTROL, VK_RCONTROL]:
+                        scancode = 0x1D
+                        is_ext = (vk == VK_RCONTROL) # 右 Ctrl 是 Extended
+                    elif vk in [VK_LMENU, VK_RMENU]:
+                        scancode = 0x38
+                        is_ext = (vk == VK_RMENU)    # 右 Alt 是 Extended
+                    elif vk == VK_LWIN:
+                        scancode = 0x5B
+                        is_ext = True
+                    elif vk == VK_RWIN:
+                        scancode = 0x5C
+                        is_ext = True
+
+                    # 透過後端發送到遠端
+                    if scancode > 0:
+                        self.rdp_widget.backend.send_scancode(scancode, is_down, is_ext)
+
+                    # --- 關鍵：返回 1 (吃掉按鍵) ---
+                    # 這樣本地系統就不會收到這些按鍵，Alt+Tab 或開始選單就不會觸發
+                    return 1
+
         return user32.CallNextHookEx(self.hook, nCode, wParam, lParam)
 
 class RdpBackend:
@@ -266,14 +328,29 @@ class RdpGLWidget(QOpenGLWidget):
     def wheelEvent(self, event):
         angle = event.angleDelta().y()
         self.backend.send_mouse(5 if angle > 0 else 6, int(event.position().x()), int(event.position().y()))
+
     def keyPressEvent(self, event):
         if event.isAutoRepeat(): return
+        
+        # 忽略已經被全局鉤子處理的修飾鍵
+        if event.key() in [Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Meta]:
+            return
+            
         scancode, is_extended = self._map_key(event)
-        if scancode > 0: self.backend.send_scancode(scancode, True, is_extended)
+        if scancode > 0:
+            self.backend.send_scancode(scancode, True, is_extended)
+
     def keyReleaseEvent(self, event):
         if event.isAutoRepeat(): return
+        
+        # 忽略修飾鍵
+        if event.key() in [Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Meta]:
+            return
+            
         scancode, is_extended = self._map_key(event)
-        if scancode > 0: self.backend.send_scancode(scancode, False, is_extended)
+        if scancode > 0:
+            self.backend.send_scancode(scancode, False, is_extended)
+
     def update_lock_state(self):
         num = (windll.user32.GetKeyState(0x90) & 0x0001) != 0
         caps = (windll.user32.GetKeyState(0x14) & 0x0001) != 0
@@ -306,13 +383,17 @@ class MainWindow(QMainWindow):
             self.backend = None
             return
 
-        self.rdp_widget = RdpGLWidget(self.backend)
-        self.setCentralWidget(self.rdp_widget)
-        self.kb_hook = GlobalKeyboardHook(self.rdp_widget)
-        self.kb_hook.install()
-        self.heartbeat = HeartbeatThread(self.backend)
-        self.heartbeat.connection_lost.connect(self.on_disconnect)
-        self.heartbeat.start()
+        if self.backend:
+            self.rdp_widget = RdpGLWidget(self.backend)
+            self.setCentralWidget(self.rdp_widget)
+
+            # --- 初始化並安裝鍵盤鉤子 ---
+            self.kb_hook = GlobalKeyboardHook(self.rdp_widget)
+            self.kb_hook.install()
+            
+            self.heartbeat = HeartbeatThread(self.backend)
+            self.heartbeat.connection_lost.connect(self.on_disconnect)
+            self.heartbeat.start()
         
         self.setup_tray()
         QTimer.singleShot(1000, self.rdp_widget.update_lock_state)
@@ -377,13 +458,22 @@ class MainWindow(QMainWindow):
         self.close()
 
     def closeEvent(self, event):
-        if hasattr(self, 'kb_hook'): self.kb_hook.uninstall()
-        if hasattr(self, 'heartbeat'): self.heartbeat.stop()
-        if hasattr(self, 'backend'): self.backend.close()
+        print("[UI] 正在關閉程式並清理鉤子...")
+        
+        # --- 務必卸載鉤子，否則系統鍵盤可能異常 ---
+        if hasattr(self, 'kb_hook'):
+            self.kb_hook.uninstall()
+        
+        if hasattr(self, 'heartbeat') and self.heartbeat:
+            self.heartbeat.stop()
+        if hasattr(self, 'backend') and self.backend:
+            self.backend.close()
+
         if hasattr(self, 'tray_icon'): self.tray_icon.hide()
         # 從列表中移除自己
         if self in active_windows:
             active_windows.remove(self)
+        
         event.accept()
 
 if __name__ == "__main__":
