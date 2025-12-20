@@ -188,7 +188,7 @@ static freerdp* _connect_attempt(const char* ip, int port, const char* username,
     }
 
     rdpSettings* settings = instance->context->settings;
-    settings->ServerHostname = _strdup("localhost");
+    settings->ServerHostname = _strdup(ip);
     settings->TargetNetAddress = _strdup(ip);
     settings->ServerPort = (port > 0) ? port : 3389;
     settings->Username = _strdup(username);
